@@ -148,6 +148,35 @@ def _patch_grader(
 
 
 class TestJudgeScorer:
+    async def test_does_not_force_grader_temperature(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # given a grader that records its per-request generation config
+        captured: dict[str, Any] = {}
+
+        class _Grader:
+            async def generate(self, prompt: str, **kwargs: Any) -> SimpleNamespace:
+                captured.update(kwargs)
+                return SimpleNamespace(
+                    completion='{"rationale": "x", "result": "correct"}',
+                    stop_reason="stop",
+                )
+
+        monkeypatch.setattr(scorers, "get_model", lambda *args, **kwargs: _Grader())
+
+        # when
+        result = await _score(
+            semantic_judge_scorer(),
+            _task_state("answer", {"tag": "litqa3"}),
+            Target("ref"),
+        )
+
+        # then provider defaults are retained while structured output is requested
+        assert result.value == CORRECT
+        config = captured["config"]
+        assert config.temperature is None
+        assert config.response_schema is not None
+
     async def test_structured_correct_verdict_scores_correct(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -76,7 +76,7 @@ def _judge_score(prompt_template: str) -> Scorer:
             attempts += 1
             result = await grader.generate(
                 prompt,
-                config=GenerateConfig(temperature=0.0, response_schema=response_schema),
+                config=GenerateConfig(response_schema=response_schema),
             )
             if not _grader_refused(result):
                 break

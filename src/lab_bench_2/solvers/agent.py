@@ -66,6 +66,10 @@ CONTINUE_MESSAGE = dedent("""\
     You did not call a tool. Think step-by-step (<=2 lines), then either call a \
 tool to make progress on the question, or call submit() with your final answer.""")
 
+INCORRECT_SUBMISSION_MESSAGE = dedent("""\
+    Your submission was incorrect. Please proceed and attempt to find the correct \
+answer.""")
+
 FINAL_WARNING_MESSAGE = dedent("""\
     You are running out of time and MUST submit your answer NOW.
     Based on everything you have learned so far, use the submit()
@@ -98,8 +102,18 @@ def copy_files_to_sandbox() -> Solver:
     return solve
 
 
+def agentic_message_limit(max_turns: int) -> int:
+    """Translate the approximate agent turn budget to a message limit."""
+    if max_turns < 1:
+        raise ValueError("max_turns must be a positive integer")
+    return max_turns * 2 + 2
+
+
 @solver
-def agentic() -> Solver:
+def agentic(
+    max_turns: int = DEFAULT_AGENTIC_MAX_TURNS,
+    max_attempts: int = 1,
+) -> Solver:
     """The benchmark's client-side agentic configuration.
 
     Copies any question files into the sandbox, then runs an agent with
@@ -110,17 +124,19 @@ def agentic() -> Solver:
     """
     # Each agent turn produces ~2 messages (assistant + tool result), plus
     # system and initial user message. Translate turns to message count.
-    message_limit = DEFAULT_AGENTIC_MAX_TURNS * 2 + 2
+    message_limit = agentic_message_limit(max_turns)
 
     return chain(
         copy_files_to_sandbox(),
         agent_with_final_warning(
             warning_limit=message_limit,
+            max_attempts=max_attempts,
             init=system_message(
                 build_sandbox_prompt(web_search=web_search_available())
             ),
             tools=sandbox_tools(),
             continue_message=CONTINUE_MESSAGE,
+            incorrect_message=INCORRECT_SUBMISSION_MESSAGE,
         ),
     )
 
@@ -128,6 +144,7 @@ def agentic() -> Solver:
 @solver
 def agent_with_final_warning(
     warning_limit: int = 45,
+    max_attempts: int = 1,
     **agent_kwargs: Any,
 ) -> Solver:
     """Wrap basic_agent with a final-warning mechanism.
@@ -136,13 +153,21 @@ def agent_with_final_warning(
     hits that limit without submitting, injects a "submit NOW" prompt and
     gives the model one more generation with tools to submit its best guess.
     """
-    agent_solver = basic_agent(message_limit=warning_limit, **agent_kwargs)
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be a positive integer")
+
+    agent_solver = basic_agent(
+        message_limit=warning_limit,
+        max_attempts=max_attempts,
+        **agent_kwargs,
+    )
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
+        hit_limit = False
         try:
             state = await agent_solver(state, generate)
         except LimitExceededError:
-            pass  # Agent hit message limit without submitting — expected
+            hit_limit = True
 
         # basic_agent set the sample message_limit to warning_limit, and the
         # agent just ran up against it — so the limit must be raised here or the
@@ -168,11 +193,16 @@ def agent_with_final_warning(
                 state.messages.extend(tool_results)
 
         # Check if submit was already called (either normally or via dangling resolution)
-        submitted = any(
-            isinstance(msg, ChatMessageTool) and msg.function == "submit"
+        submissions = [
+            msg
             for msg in state.messages
-        )
-        if submitted:
+            if isinstance(msg, ChatMessageTool) and msg.function == "submit"
+        ]
+        # A normal return means basic_agent stopped because a submission was
+        # correct or the attempt cap was reached. If the message limit fired,
+        # preserve a final submission only after all configured attempts have
+        # been used; otherwise offer the model its final-warning attempt.
+        if submissions and (not hit_limit or len(submissions) >= max_attempts):
             for msg in reversed(state.messages):
                 if isinstance(msg, ChatMessageTool) and msg.function == "submit":
                     state.output.completion = msg.text

@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -5,14 +6,23 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from inspect_ai import Task, eval
 from inspect_ai.dataset import Sample
-from inspect_ai.model import ChatMessage, ModelName, ModelOutput, get_model
-from inspect_ai.solver import Generate, Solver, TaskState
+from inspect_ai.model import (
+    ChatMessage,
+    ChatMessageTool,
+    ModelName,
+    ModelOutput,
+    get_model,
+)
+from inspect_ai.solver import Generate, Solver, TaskState, generate, solver
+from inspect_ai.util import LimitExceededError
 
 import lab_bench_2.solvers.agent as agent_module
 from lab_bench_2.solvers.agent import (
     FINAL_WARNING_MESSAGE,
+    INCORRECT_SUBMISSION_MESSAGE,
     agent_with_final_warning,
     agentic,
+    agentic_message_limit,
     build_sandbox_prompt,
     copy_files_to_sandbox,
 )
@@ -20,6 +30,77 @@ from lab_bench_2.solvers.agent import (
 
 def test_agentic_returns_solver() -> None:
     assert isinstance(agentic(), Solver)
+
+
+def test_agentic_message_limit_uses_configured_turn_budget() -> None:
+    assert agentic_message_limit(20) == 42
+
+
+def test_agentic_rejects_non_positive_turn_budget() -> None:
+    with pytest.raises(ValueError, match="positive integer"):
+        agentic(max_turns=0)
+
+
+def test_agentic_forwards_submission_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_agent_with_final_warning(**kwargs: Any) -> Solver:
+        captured.update(kwargs)
+        return generate()
+
+    monkeypatch.setattr(
+        agent_module, "agent_with_final_warning", fake_agent_with_final_warning
+    )
+
+    assert isinstance(agentic(max_attempts=3), Solver)
+    assert captured["max_attempts"] == 3
+    assert captured["incorrect_message"] == INCORRECT_SUBMISSION_MESSAGE
+
+
+def test_agentic_rejects_non_positive_submission_limit() -> None:
+    with pytest.raises(ValueError, match="positive integer"):
+        agentic(max_attempts=0)
+
+
+def test_turn_limit_after_prior_submission_still_offers_remaining_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    @solver
+    def limited_agent() -> Solver:
+        async def solve(state: TaskState, generate: Generate) -> TaskState:
+            state.messages.append(
+                ChatMessageTool(
+                    content="FIRST",
+                    tool_call_id="first",
+                    function="submit",
+                )
+            )
+            state.output = ModelOutput.from_content("mockllm/model", "FIRST")
+            raise LimitExceededError("message", value=4, limit=4)
+
+        return solve
+
+    monkeypatch.setattr(agent_module, "basic_agent", lambda **kwargs: limited_agent())
+    final_output = ModelOutput.from_content("mockllm/model", "final response")
+    fake_model = MagicMock()
+    fake_model.generate = AsyncMock(return_value=final_output)
+    monkeypatch.setattr(agent_module, "get_model", lambda: fake_model)
+    state = TaskState(
+        model=ModelName("mockllm/model"),
+        sample_id="remaining-attempt",
+        epoch=0,
+        input="q",
+        messages=[],
+    )
+
+    result = asyncio.run(
+        agent_with_final_warning(warning_limit=4, max_attempts=2)(
+            state, cast(Generate, AsyncMock())
+        )
+    )
+
+    assert any(FINAL_WARNING_MESSAGE in message.text for message in result.messages)
+    fake_model.generate.assert_awaited_once()
 
 
 @pytest.mark.parametrize("web_search", [True, False])

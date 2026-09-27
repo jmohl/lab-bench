@@ -23,7 +23,12 @@ SOLVERS_BY_TYPE = {
 COMPOSE = str(Path(__file__).parent / "compose.yaml")
 
 
-def solver_for_type(solver_type: SolverType) -> Solver:
+def solver_for_type(
+    solver_type: SolverType,
+    *,
+    agentic_max_turns: int | None = None,
+    agentic_max_attempts: int | None = None,
+) -> Solver:
     """Return the solver for a type, or raise if the type is not yet implemented."""
     factory = SOLVERS_BY_TYPE.get(solver_type)
     if factory is None:
@@ -31,6 +36,13 @@ def solver_for_type(solver_type: SolverType) -> Solver:
             f"No solver implemented for type={solver_type!r}; "
             f"supported types: {sorted(SOLVERS_BY_TYPE)}."
         )
+    if solver_type == "agentic":
+        agentic_kwargs: dict[str, int] = {}
+        if agentic_max_turns is not None:
+            agentic_kwargs["max_turns"] = agentic_max_turns
+        if agentic_max_attempts is not None:
+            agentic_kwargs["max_attempts"] = agentic_max_attempts
+        return agentic(**agentic_kwargs)
     return factory()
 
 

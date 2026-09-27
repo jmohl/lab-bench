@@ -4,6 +4,7 @@ from typing import Any
 import pytest
 from inspect_ai._util.registry import registry_info
 from inspect_ai.dataset import Dataset, MemoryDataset, Sample
+from inspect_ai.solver import generate
 
 from lab_bench_2.lab_bench_2 import SUPPORTED_TAGS, lab_bench_2
 
@@ -88,6 +89,41 @@ class TestLabBench2Task:
         # then the single-tag scorer is not grouped
         assert sut.scorer is not None
         assert "inspect_ai/grouped" not in _metric_names(sut.scorer[0])
+
+    def test_agentic_limits_are_forwarded_to_solver(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured: dict[str, Any] = {}
+
+        def fake_loader(**kwargs: Any) -> Dataset:
+            return _fake_dataset()
+
+        def fake_solver(
+            solver_type: str,
+            *,
+            agentic_max_turns: int | None = None,
+            agentic_max_attempts: int | None = None,
+        ) -> Any:
+            captured["solver_type"] = solver_type
+            captured["agentic_max_turns"] = agentic_max_turns
+            captured["agentic_max_attempts"] = agentic_max_attempts
+            return generate()
+
+        monkeypatch.setattr(task_module, "load_lab_bench_2_dataset", fake_loader)
+        monkeypatch.setattr(task_module, "solver_for_type", fake_solver)
+
+        lab_bench_2(
+            tags="litqa3",
+            solver="agentic",
+            agentic_max_turns=20,
+            agentic_max_attempts=3,
+        )
+
+        assert captured == {
+            "solver_type": "agentic",
+            "agentic_max_turns": 20,
+            "agentic_max_attempts": 3,
+        }
 
     def test_unknown_tag_raises(self) -> None:
         with pytest.raises(NotImplementedError):

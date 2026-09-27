@@ -43,6 +43,8 @@ def lab_bench_2(
     tags: str | list[str] | None = None,
     mode: Mode = "file",
     solver: SolverType = "bare",
+    agentic_max_turns: int | None = None,
+    agentic_max_attempts: int | None = None,
 ) -> Task:
     """LAB-Bench 2 evaluation task.
 
@@ -75,8 +77,15 @@ def lab_bench_2(
             is given provider-native, **server-side** tools — WebSearch and
             CodeExecution — and runs Inspect's tool-use loop.
             - ``agentic``: the client-side agentic configuration. The model is
-            given ``python``/``bash`` (and, with an external provider
-            key, ``web_search``) tools in a Docker sandbox.
+              given ``python``/``bash`` (and, with an external provider
+              key, ``web_search``) tools in a Docker sandbox.
+        agentic_max_turns: Approximate turn budget for the client-side agentic
+            solver before its final-warning submission. Uses the solver default
+            when omitted and has no effect on other solver types.
+        agentic_max_attempts: Maximum submissions accepted by the client-side
+            agentic solver. Incorrect submissions receive only a generic
+            incorrect signal before the agent continues. Uses the solver default
+            of one when omitted and has no effect on other solver types.
     """
     dataset: Dataset
     scorer: Scorer
@@ -94,7 +103,11 @@ def lab_bench_2(
         scorer = multi_tags_scorer()
     return Task(
         dataset=dataset,
-        solver=solver_for_type(solver),
+        solver=solver_for_type(
+            solver,
+            agentic_max_turns=agentic_max_turns,
+            agentic_max_attempts=agentic_max_attempts,
+        ),
         scorer=scorer,
         sandbox=sandbox_for_solver(solver),
         version=EVAL_VERSION,

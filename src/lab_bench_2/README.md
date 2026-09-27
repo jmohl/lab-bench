@@ -74,6 +74,8 @@ See `uv run inspect eval --help` for all available options.
 - `tags` (str | list[str] | None): Which LAB-Bench 2 subset(s) to run. Supported tags: ``cloning``, ``dbqa2``, ``figqa2`` (and ``figqa2-img`` / ``figqa2-pdf``), ``litqa3``, ``patentqa``, ``protocolqa2``, ``seqqa2``, ``sourcequality``, ``suppqa2``, ``tableqa2`` (and ``tableqa2-img`` / ``tableqa2-pdf``), ``trialqa``., A single tag (e.g. ``"litqa3"``) runs just that subset and reports one accuracy., A list (e.g. ``["litqa3", "cloning"]``) or ``None`` (the default, meaning every tag) runs the subsets together at the chosen ``mode``, reporting accuracy per tag plus an overall aggregate. (default: `None`)
 - `mode` (Mode): How a question's data files are delivered to the model. A no-op for tags without files (such as litqa3). Options: ``file``: Files uploaded via API. PDFs/images attached as context; other files as document attachments., ``inject``: Text file contents concatenated into the prompt as text., ``retrieve``: Only file names/stems are given; prompt instructs the agent to retrieve the necessary sequences or data from a source of its choosing. File contents are withheld. (default: `'file'`)
 - `solver` (SolverType): The solver to run. Options: ``bare``: a plain single-turn `generate()`., ``tools``: the server-side agentic configuration. The model is given provider-native, **server-side** tools — WebSearch and CodeExecution — and runs Inspect's tool-use loop., ``agentic``: the client-side agentic configuration. The model is given ``python``/``bash`` (and, with an external provider key, ``web_search``) tools in a Docker sandbox. (default: `'bare'`)
+- `agentic_max_turns` (int | None): Approximate turn budget for the client-side agentic solver before its final-warning submission. Uses the solver default when omitted and has no effect on other solver types. (default: `None`)
+- `agentic_max_attempts` (int | None): Maximum submissions accepted by the client-side agentic solver. Incorrect submissions receive only a generic incorrect signal before the agent continues. Uses the solver default of one when omitted and has no effect on other solver types. (default: `None`)
 <!-- /Parameters: Automatically Generated -->
 
 ### Reference run configs
@@ -125,6 +127,17 @@ parameter:
   `TAVILY_API_KEY`, `EXA_API_KEY`, or `GOOGLE_CSE_API_KEY`) inside a **Docker sandbox**,
   and must call `submit()` to answer. A question's data files are copied into the sandbox
   working directory. The initial docker image build should take ~ 2 minutes on a standard personal computer.
+
+The client-side agent can be allowed multiple submissions with
+`-T agentic_max_attempts=N`. Each submission before the final attempt is scored
+immediately. A correct submission ends the trajectory; an incorrect submission
+receives only a generic incorrect signal, never the scorer explanation or error
+details:
+
+```bash
+uv run inspect eval lab_bench_2/lab_bench_2 -T tags=litqa3 \
+  -T solver=agentic -T agentic_max_attempts=3
+```
 
 Reasoning effort is set with Inspect's built-in `--reasoning-effort` flag (it
 applies to the model under test only, not the grader). The paper's "tools,high"
@@ -241,8 +254,9 @@ and supplement tags (`figqa2*`, `tableqa2*`, `suppqa2`) use an exact-match
 variant for numeric answers.
 
 The judge model is selected via the `grader` model role and defaults to
-`anthropic/claude-sonnet-4-5` at temperature 0. Override it on the command line,
-for example:
+`anthropic/claude-sonnet-4-5`. The scorer does not force a temperature, because
+some current models reject that parameter. Override the grader on the command
+line, for example:
 
 ```bash
 uv run inspect eval lab_bench_2/lab_bench_2 \

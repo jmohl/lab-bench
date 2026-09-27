@@ -1,8 +1,9 @@
 from typing import cast
 
 import pytest
-from inspect_ai.solver import Solver
+from inspect_ai.solver import Solver, generate
 
+import lab_bench_2.solvers.registry as registry_module
 from lab_bench_2.solvers.registry import (
     SOLVERS_BY_TYPE,
     SolverType,
@@ -27,6 +28,23 @@ class TestSolverForType:
         # when / then a NotImplementedError is raised
         with pytest.raises(NotImplementedError):
             solver_for_type(cast(SolverType, "nonexistent"))
+
+    def test_forwards_agentic_limits(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        captured: dict[str, int] = {}
+
+        def fake_agentic(**kwargs: int) -> Solver:
+            captured.update(kwargs)
+            return generate()
+
+        monkeypatch.setattr(registry_module, "agentic", fake_agentic)
+
+        solver_for_type(
+            "agentic",
+            agentic_max_turns=20,
+            agentic_max_attempts=3,
+        )
+
+        assert captured == {"max_turns": 20, "max_attempts": 3}
 
 
 class TestSandboxForSolver:
